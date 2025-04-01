@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -11,15 +13,31 @@ import (
 var fname = flag.String("fname", "", "the file to analyze")
 
 func main() {
-	os.Exit(cmd(os.Args[1:]))
+	tu, err := parse_file_with_args(os.Args[1:])
+	if err != nil {
+		fmt.Printf("ERROR: %s", err)
+		os.Exit(1)
+	}
+	defer tu.Dispose()
+
+	tc := NewTranspileContext()
+	tc.AddFile(File{Name: *fname}, tu)
+	repo := tc.get_repo()
+
+	var jsonStr []byte
+	jsonStr, err = json.MarshalIndent(repo, "", "  ")
+	if err != nil {
+		fmt.Printf("ERROR: %s", err)
+		os.Exit(1)
+	} else {
+		fmt.Printf("GOT REPO:\n%s\n", jsonStr)
+	}
 }
 
-func cmd(args []string) int {
-	fmt.Printf(":: go-clang-dump...\n")
+func parse_file_with_args(args []string) (*clang.TranslationUnit, error) {
 	if err := flag.CommandLine.Parse(args); err != nil {
 		fmt.Printf("ERROR: %s", err)
-
-		return 1
+		return nil, err
 	}
 
 	fmt.Printf(":: fname: %s\n", *fname)
@@ -28,8 +46,7 @@ func cmd(args []string) int {
 	if *fname == "" {
 		flag.Usage()
 		fmt.Printf("please provide a file name to analyze\n")
-
-		return 1
+		return nil, errors.New("no file name provided")
 	}
 
 	idx := clang.NewIndex(0, 1)
@@ -42,44 +59,5 @@ func cmd(args []string) int {
 	}
 
 	tu := idx.ParseTranslationUnit(*fname, tuArgs, nil, 0)
-	defer tu.Dispose()
-
-	fmt.Printf("tu: %s\n", tu.Spelling())
-
-	diagnostics := tu.Diagnostics()
-	for _, d := range diagnostics {
-		fmt.Println("PROBLEM:", d.Spelling())
-	}
-
-	cursor := tu.TranslationUnitCursor()
-	fmt.Printf("cursor-isnull: %v\n", cursor.IsNull())
-	fmt.Printf("cursor: %s\n", cursor.Spelling())
-	fmt.Printf("cursor-kind: %s\n", cursor.Kind().Spelling())
-
-	fmt.Printf("tu-fname: %s\n", tu.File(*fname).Name())
-
-	cursor.Visit(func(cursor, parent clang.Cursor) clang.ChildVisitResult {
-		if cursor.IsNull() {
-			fmt.Printf("cursor: <none>\n")
-
-			return clang.ChildVisit_Continue
-		}
-
-		fmt.Printf("%s: %s (%s)\n", cursor.Kind().Spelling(), cursor.Spelling(), cursor.USR())
-
-		switch cursor.Kind() {
-		case clang.Cursor_ClassDecl, clang.Cursor_EnumDecl, clang.Cursor_StructDecl, clang.Cursor_Namespace:
-			return clang.ChildVisit_Recurse
-		}
-
-		return clang.ChildVisit_Continue
-	})
-
-	if len(diagnostics) > 0 {
-		fmt.Println("NOTE: There were problems while analyzing the given file")
-	}
-
-	fmt.Printf(":: bye.\n")
-
-	return 0
+	return &tu, nil
 }
